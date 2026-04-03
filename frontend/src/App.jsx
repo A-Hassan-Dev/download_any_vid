@@ -2,7 +2,7 @@ import { useState } from 'react';
 import axios from 'axios';
 import './index.css';
 
-const API = 'http://localhost:5000';
+const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 function formatDuration(sec) {
   if (!sec) return '';
