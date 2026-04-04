@@ -41,8 +41,8 @@ app.post('/fetch', async (req, res) => {
       '--no-playlist',
       '--no-warnings',
       '--ignore-config',
-      // 🍎 THE TRICK: Impersonate iOS client to bypass bot check
-      '--extractor-args "youtube:player_client=ios"',
+      // Try to BE AS GENERIC AS POSSIBLE
+      '--format "best/bestvideo+bestaudio"',
     ];
     
     if (fs.existsSync(COOKIES_PATH)) args.push(`--cookies "${COOKIES_PATH}"`);
@@ -60,10 +60,7 @@ app.post('/fetch', async (req, res) => {
   } catch (err) {
     console.error('[FETCH ERR]', err.stderr || err.error);
     const msg = err.stderr || '';
-    if (msg.includes('Sign in to confirm')) {
-      return res.status(500).json({ error: 'يوتيوب يطلب توثيق. جرب رابطاً آخر أو انتظر قليلاً.' });
-    }
-    res.status(500).json({ error: 'فشل الجلب: ' + (msg || 'Unexpected error') });
+    res.status(500).json({ error: 'حدث خطأ: ' + (msg.includes('format is not available') ? 'الجودة غير متاحة حالياً جرب رابطاً آخر.' : msg) });
   }
 });
 
@@ -77,7 +74,6 @@ app.get('/download', async (req, res) => {
       `"${url.trim()}"`,
       '--no-playlist',
       '--ignore-config',
-      '--extractor-args "youtube:player_client=ios"',
       `-o "${tmpFile}"`
     ];
 
@@ -87,7 +83,8 @@ app.get('/download', async (req, res) => {
       args.push('-x', '--audio-format mp3', '--audio-quality 0');
     } else {
       const h = quality || '720';
-      args.push(`-f "bestvideo[height<=${h}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${h}]/best"`, '--merge-output-format mp4');
+      // Use format sort instead of strict selection
+      args.push(`-f "bestvideo[height<=${h}]+bestaudio/best[height<=${h}]/best"`, '--merge-output-format mp4');
     }
 
     await runYtdlp(args);
@@ -98,11 +95,13 @@ app.get('/download', async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
     res.setHeader('Content-Type', isAudio ? 'audio/mpeg' : 'video/mp4');
 
-    fs.createReadStream(tmpFile).pipe(res).on('finish', () => fs.unlink(tmpFile, () => {}));
+    fs.createReadStream(tmpFile).pipe(res).on('finish', () => {
+      try { fs.unlinkSync(tmpFile); } catch(e){}
+    });
   } catch (err) {
     console.error('[DL ERR]', err.stderr || err.error);
     if (!res.headersSent) res.status(500).json({ error: 'فشل التحميل' });
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 iOS Emulation ready on ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Live on ${PORT}`));
