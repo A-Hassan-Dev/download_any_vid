@@ -40,7 +40,10 @@ app.post('/fetch', async (req, res) => {
       '--dump-json',
       '--no-playlist',
       '--no-warnings',
-      '--no-check-certificates'
+      '--ignore-config',
+      '--no-check-certificate',
+      '--prefer-free-formats',
+      '--youtube-skip-dash-manifest' // Key to avoid format errors on some IPs
     ];
     
     if (fs.existsSync(COOKIES_PATH)) args.push(`--cookies "${COOKIES_PATH}"`);
@@ -57,7 +60,7 @@ app.post('/fetch', async (req, res) => {
     });
   } catch (err) {
     console.error('[FETCH ERR]', err.stderr || err.error);
-    res.status(500).json({ error: 'فشل جلب البيانات: ' + (err.stderr || 'مشكلة في الرابط') });
+    res.status(500).json({ error: 'فشل جلب البيانات. السيرفر يرفض الاتصال حالياً جرب لاحقاً أو رابطاً آخر.' });
   }
 });
 
@@ -70,7 +73,8 @@ app.get('/download', async (req, res) => {
     const args = [
       `"${url.trim()}"`,
       '--no-playlist',
-      '--no-check-certificates',
+      '--no-check-certificate',
+      '--ignore-config',
       `-o "${tmpFile}"`
     ];
 
@@ -80,7 +84,7 @@ app.get('/download', async (req, res) => {
       args.push('-x', '--audio-format mp3', '--audio-quality 0');
     } else {
       const h = quality || '720';
-      args.push(`-f "bestvideo[height<=${h}]+bestaudio/best"`, '--merge-output-format mp4');
+      args.push(`-f "best[height<=${h}]/best"`, '--merge-output-format mp4');
     }
 
     await runYtdlp(args);
