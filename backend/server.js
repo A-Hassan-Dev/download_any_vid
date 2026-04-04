@@ -20,14 +20,14 @@ function runYtdlp(args) {
     const cmd = `${YTDLP_BIN} ${args.join(' ')}`;
     console.log(`[EXEC] ${cmd}`);
     exec(cmd, { timeout: 150000 }, (error, stdout, stderr) => {
-      if (error) reject({ error, stderr });
+      if (error) reject({ error, stderr, stdout });
       else resolve(stdout);
     });
   });
 }
 
 app.get('/', (req, res) => {
-  res.json({ ok: true, ytdlp: fs.existsSync(YTDLP_BIN) });
+  res.json({ ok: true, cookies: fs.existsSync(COOKIES_PATH) });
 });
 
 app.post('/fetch', async (req, res) => {
@@ -41,9 +41,7 @@ app.post('/fetch', async (req, res) => {
       '--no-playlist',
       '--no-warnings',
       '--ignore-config',
-      '--no-check-certificate',
-      '--prefer-free-formats',
-      '--youtube-skip-dash-manifest' // Key to avoid format errors on some IPs
+      '--no-check-certificate'
     ];
     
     if (fs.existsSync(COOKIES_PATH)) args.push(`--cookies "${COOKIES_PATH}"`);
@@ -59,8 +57,9 @@ app.post('/fetch', async (req, res) => {
       platform: info.extractor_key || '',
     });
   } catch (err) {
-    console.error('[FETCH ERR]', err.stderr || err.error);
-    res.status(500).json({ error: 'فشل جلب البيانات. السيرفر يرفض الاتصال حالياً جرب لاحقاً أو رابطاً آخر.' });
+    // Return the FULL stderr so we can fix it once and for all
+    console.error('[FETCH ERR]', err.stderr);
+    res.status(500).json({ error: 'السيرفر بيقول: ' + (err.stderr || 'خطأ غير معروف') });
   }
 });
 
@@ -73,8 +72,8 @@ app.get('/download', async (req, res) => {
     const args = [
       `"${url.trim()}"`,
       '--no-playlist',
-      '--no-check-certificate',
       '--ignore-config',
+      '--no-check-certificate',
       `-o "${tmpFile}"`
     ];
 
@@ -83,8 +82,9 @@ app.get('/download', async (req, res) => {
     if (isAudio) {
       args.push('-x', '--audio-format mp3', '--audio-quality 0');
     } else {
-      const h = quality || '720';
-      args.push(`-f "best[height<=${h}]/best"`, '--merge-output-format mp4');
+      const h = quality || '1080';
+      // Just try to get the best available if specific height fails
+      args.push(`-f "bestvideo[height<=${h}]+bestaudio/best"`, '--merge-output-format mp4');
     }
 
     await runYtdlp(args);
@@ -99,9 +99,9 @@ app.get('/download', async (req, res) => {
       try { fs.unlinkSync(tmpFile); } catch(e){}
     });
   } catch (err) {
-    console.error('[DL ERR]', err.stderr || err.error);
-    if (!res.headersSent) res.status(500).json({ error: 'فشل التحميل' });
+    console.error('[DL ERR]', err.stderr);
+    if (!res.headersSent) res.status(500).json({ error: 'فشل التحميل: ' + (err.stderr || 'خطأ') });
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Dedicated to success on ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Final Debug at ${PORT}`));
