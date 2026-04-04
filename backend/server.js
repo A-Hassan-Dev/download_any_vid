@@ -14,26 +14,31 @@ process.env.FFMPEG_LOCATION = ffmpegDir;
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors({ exposedHeaders: ['Content-Disposition'] }));
+// Allow all origins for easier deployment
+app.use(cors({ 
+  origin: '*',
+  exposedHeaders: ['Content-Disposition'] 
+}));
 app.use(express.json());
 
-// Sanitize a string for use as a filename
 function safeFilename(title = '') {
   return title
-    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')   // remove illegal chars
-    .replace(/\s+/g, '_')                       // spaces → underscores
-    .replace(/\.+$/, '')                        // strip trailing dots
-    .substring(0, 120)                          // max 120 chars
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
+    .replace(/\s+/g, '_')
+    .replace(/\.+$/, '')
+    .substring(0, 120)
     || 'download';
 }
 
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', ffmpeg: ffmpegPath });
+  res.json({ status: 'ok', ffmpeg: ffmpegPath, platform: process.platform });
 });
 
 // POST /fetch
 app.post('/fetch', async (req, res) => {
   const { url } = req.body;
+  console.log(`[LOG] Fetching info for: ${url}`);
+  
   if (!url || !url.trim()) return res.status(400).json({ error: 'URL is required.' });
 
   try {
@@ -41,7 +46,7 @@ app.post('/fetch', async (req, res) => {
       dumpSingleJson: true,
       noCheckCertificates: true,
       noWarnings: true,
-      ffmpegLocation: path.dirname(ffmpegPath),
+      ffmpegLocation: ffmpegDir,
       addHeader: [
         'user-agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36',
       ],
@@ -55,22 +60,20 @@ app.post('/fetch', async (req, res) => {
       platform: info.extractor_key || info.extractor || '',
     });
   } catch (err) {
-    console.error('[FETCH ERROR]', err.message || err);
-    res.status(500).json({ error: 'تعذّر جلب معلومات الفيديو. تحقق من الرابط.' });
+    console.error('[FETCH ERROR]', err.stderr || err.message || err);
+    res.status(500).json({ error: 'تعذّر جلب معلومات الفيديو. السيرفر بيقول: ' + (err.stderr || err.message) });
   }
 });
 
 // GET /download
 app.get('/download', async (req, res) => {
   const { url, format, quality, title } = req.query;
-  if (!url) return res.status(400).json({ error: 'URL is required.' });
-
   const isAudio = format === 'mp3';
   const tmpDir = os.tmpdir();
   const tmpId = randomUUID();
   const baseName = safeFilename(title || 'download');
 
-  console.log(`[DOWNLOAD] format=${format} quality=${quality} title="${baseName}"`);
+  console.log(`[LOG] Download Started: ${baseName} (${format})`);
 
   try {
     if (isAudio) {
@@ -87,28 +90,25 @@ app.get('/download', async (req, res) => {
         ffmpegLocation: ffmpegDir,
       });
 
-      if (!fs.existsSync(tmpFile)) throw new Error('Audio file not created.');
-
-      const stat = fs.statSync(tmpFile);
       const audioName = `${baseName}.mp3`;
       res.setHeader('Content-Disposition', `attachment; filename="${audioName}"; filename*=UTF-8''${encodeURIComponent(audioName)}`);
       res.setHeader('Content-Type', 'audio/mpeg');
-      res.setHeader('Content-Length', stat.size);
 
       const stream = fs.createReadStream(tmpFile);
       stream.pipe(res);
-      stream.on('close', () => fs.unlink(tmpFile, () => {}));
+      stream.on('finish', () => {
+        fs.unlink(tmpFile, (e) => e && console.error('[UNLINK ERR]', e));
+        console.log(`[LOG] Download Done: ${audioName}`);
+      });
 
     } else {
       const height = parseInt(quality) || 720;
       const tmpFile = path.join(tmpDir, `${tmpId}.mp4`);
 
-      // Try merged format first, fallback to single-stream best
       const fmtStr = [
         `bestvideo[height<=${height}][ext=mp4]+bestaudio[ext=m4a]`,
         `bestvideo[height<=${height}]+bestaudio`,
         `best[height<=${height}][ext=mp4]`,
-        `best[height<=${height}]`,
         `best`,
       ].join('/');
 
@@ -121,27 +121,25 @@ app.get('/download', async (req, res) => {
         ffmpegLocation: ffmpegDir,
       });
 
-      if (!fs.existsSync(tmpFile)) throw new Error('Video file not created.');
-
-      const stat = fs.statSync(tmpFile);
       const videoName = `${baseName}.mp4`;
       res.setHeader('Content-Disposition', `attachment; filename="${videoName}"; filename*=UTF-8''${encodeURIComponent(videoName)}`);
       res.setHeader('Content-Type', 'video/mp4');
-      res.setHeader('Content-Length', stat.size);
 
       const stream = fs.createReadStream(tmpFile);
       stream.pipe(res);
-      stream.on('close', () => fs.unlink(tmpFile, () => {}));
+      stream.on('finish', () => {
+        fs.unlink(tmpFile, (e) => e && console.error('[UNLINK ERR]', e));
+        console.log(`[LOG] Download Done: ${videoName}`);
+      });
     }
   } catch (err) {
-    console.error('[DOWNLOAD ERROR]', err.message || err);
+    console.error('[DOWNLOAD ERROR]', err.stderr || err.message || err);
     if (!res.headersSent) {
-      res.status(500).json({ error: 'فشل التحميل: ' + (err.message || 'خطأ غير معروف') });
+      res.status(500).json({ error: 'فشل التحميل من السيرفر: ' + (err.stderr || err.message) });
     }
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`✅ DownAnyVid running on http://localhost:${PORT}`);
-  console.log(`🎬 ffmpeg path: ${ffmpegPath}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ DownAnyVid listening on port ${PORT}`);
 });
