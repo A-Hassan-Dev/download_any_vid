@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { exec } = require('child_process');
+const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -15,51 +15,75 @@ app.use(express.json());
 
 const COOKIES_PATH = path.join(__dirname, 'cookies.txt');
 
+// Optimized run function using SPAWN for better argument handling
 function runYtdlp(args) {
   return new Promise((resolve, reject) => {
-    const cmd = `${YTDLP_BIN} ${args.join(' ')}`;
-    console.log(`[EXEC] ${cmd}`);
-    exec(cmd, { timeout: 150000 }, (error, stdout, stderr) => {
-      if (error) reject({ error, stderr, stdout });
-      else resolve(stdout);
+    console.log(`[EXEC] yt-dlp ${args.join(' ')}`);
+    const child = spawn(YTDLP_BIN, args);
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data) => stdout += data);
+    child.stderr.on('data', (data) => stderr += data);
+
+    child.on('close', (code) => {
+      if (code === 0) resolve(stdout);
+      else reject({ code, stderr });
     });
   });
 }
 
 app.get('/', (req, res) => {
-  res.json({ ok: true, cookies: fs.existsSync(COOKIES_PATH) });
+  res.json({ ok: true, ytdlp: fs.existsSync(YTDLP_BIN), cookies: fs.existsSync(COOKIES_PATH) });
 });
+
+async function fetchInfo(url, useCookies = true) {
+  const args = [
+    url,
+    '--dump-json',
+    '--no-playlist',
+    '--no-warnings',
+    '--ignore-config',
+    '--no-check-certificate'
+  ];
+  if (useCookies && fs.existsSync(COOKIES_PATH)) {
+    args.push('--cookies', COOKIES_PATH);
+  }
+  return runYtdlp(args);
+}
 
 app.post('/fetch', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
 
   try {
-    const args = [
-      `"${url.trim()}"`,
-      '--dump-json',
-      '--no-playlist',
-      '--no-warnings',
-      '--ignore-config',
-      '--no-check-certificate'
-    ];
-    
-    if (fs.existsSync(COOKIES_PATH)) args.push(`--cookies "${COOKIES_PATH}"`);
-
-    const output = await runYtdlp(args);
-    const info = JSON.parse(output);
-
-    res.json({
-      title: info.title || 'Video',
-      thumbnail: info.thumbnail || '',
-      duration: info.duration || 0,
-      uploader: info.uploader || info.channel || '',
-      platform: info.extractor_key || '',
-    });
+    // Attempt 1: Without cookies (often works better on some cloud IPs)
+    console.log('[LOG] Attempting fetch without cookies...');
+    try {
+      const output = await fetchInfo(url.trim(), false);
+      const info = JSON.parse(output);
+      return res.json({
+        title: info.title || 'Video',
+        thumbnail: info.thumbnail || '',
+        duration: info.duration || 0,
+        uploader: info.uploader || info.channel || '',
+        platform: info.extractor_key || '',
+      });
+    } catch (e1) {
+      console.log('[LOG] Failed without cookies, trying with cookies...');
+      const output = await fetchInfo(url.trim(), true);
+      const info = JSON.parse(output);
+      return res.json({
+        title: info.title || 'Video',
+        thumbnail: info.thumbnail || '',
+        duration: info.duration || 0,
+        uploader: info.uploader || info.channel || '',
+        platform: info.extractor_key || '',
+      });
+    }
   } catch (err) {
-    // Return the FULL stderr so we can fix it once and for all
     console.error('[FETCH ERR]', err.stderr);
-    res.status(500).json({ error: 'السيرفر بيقول: ' + (err.stderr || 'خطأ غير معروف') });
+    res.status(500).json({ error: 'حدثت مشكلة: ' + (err.stderr || 'تحقق من الرابط') });
   }
 });
 
@@ -69,22 +93,14 @@ app.get('/download', async (req, res) => {
   const tmpFile = path.join(os.tmpdir(), `${randomUUID()}.${isAudio?'mp3':'mp4'}`);
 
   try {
-    const args = [
-      `"${url.trim()}"`,
-      '--no-playlist',
-      '--ignore-config',
-      '--no-check-certificate',
-      `-o "${tmpFile}"`
-    ];
-
-    if (fs.existsSync(COOKIES_PATH)) args.push(`--cookies "${COOKIES_PATH}"`);
+    const args = [url.trim(), '--no-playlist', '--ignore-config', '--no-check-certificate', '-o', tmpFile];
+    if (fs.existsSync(COOKIES_PATH)) args.push('--cookies', COOKIES_PATH);
 
     if (isAudio) {
-      args.push('-x', '--audio-format mp3', '--audio-quality 0');
+      args.push('-x', '--audio-format', 'mp3', '--audio-quality', '0');
     } else {
-      const h = quality || '1080';
-      // Just try to get the best available if specific height fails
-      args.push(`-f "bestvideo[height<=${h}]+bestaudio/best"`, '--merge-output-format mp4');
+      const h = quality || '720';
+      args.push('-f', `bestvideo[height<=${h}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${h}]/best`, '--merge-output-format', 'mp4');
     }
 
     await runYtdlp(args);
@@ -100,8 +116,8 @@ app.get('/download', async (req, res) => {
     });
   } catch (err) {
     console.error('[DL ERR]', err.stderr);
-    if (!res.headersSent) res.status(500).json({ error: 'فشل التحميل: ' + (err.stderr || 'خطأ') });
+    if (!res.headersSent) res.status(500).json({ error: 'فشل التحميل' });
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Final Debug at ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Smart Server ready on ${PORT}`));
