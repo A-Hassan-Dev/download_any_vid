@@ -17,10 +17,9 @@ const COOKIES_PATH = path.join(__dirname, 'cookies.txt');
 
 function runYtdlp(args) {
   return new Promise((resolve, reject) => {
-    // Add internal quote handling for args
     const cmd = `${YTDLP_BIN} ${args.join(' ')}`;
-    console.log(`[EXEC] Starting: ${cmd}`);
-    exec(cmd, { timeout: 120000 }, (error, stdout, stderr) => {
+    console.log(`[EXEC] ${cmd}`);
+    exec(cmd, { timeout: 150000 }, (error, stdout, stderr) => {
       if (error) reject({ error, stderr });
       else resolve(stdout);
     });
@@ -28,55 +27,43 @@ function runYtdlp(args) {
 }
 
 app.get('/', (req, res) => {
-  res.json({ ok: true, ytdlp: fs.existsSync(YTDLP_BIN), cookies: fs.existsSync(COOKIES_PATH) });
+  res.json({ ok: true, ytdlp: fs.existsSync(YTDLP_BIN) });
 });
 
 app.post('/fetch', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'URL required' });
 
-  // Clean URL (remove tracking params)
-  const cleanUrl = url.trim().split('?si=')[0];
-
   try {
     const args = [
-      `"${cleanUrl}"`,
+      `"${url.trim()}"`,
       '--dump-json',
       '--no-playlist',
       '--no-warnings',
-      '--ignore-config'
+      '--ignore-config',
+      // 🍎 THE TRICK: Impersonate iOS client to bypass bot check
+      '--extractor-args "youtube:player_client=ios"',
     ];
     
-    // Attempt 1: With cookies if exist
     if (fs.existsSync(COOKIES_PATH)) args.push(`--cookies "${COOKIES_PATH}"`);
 
-    try {
-      const output = await runYtdlp(args);
-      const info = JSON.parse(output);
-      res.json({
-        title: info.title || 'Video',
-        thumbnail: info.thumbnail || '',
-        duration: info.duration || 0,
-        uploader: info.uploader || info.channel || '',
-        platform: info.extractor_key || '',
-      });
-    } catch (err1) {
-      // Attempt 2: Without cookies (if cookies were causing 'format not available')
-      console.log('[LOG] First attempt failed, trying without cookies...');
-      const fallbackArgs = args.filter(a => !a.includes('--cookies'));
-      const output = await runYtdlp(fallbackArgs);
-      const info = JSON.parse(output);
-      res.json({
-        title: info.title || 'Video',
-        thumbnail: info.thumbnail || '',
-        duration: info.duration || 0,
-        uploader: info.uploader || info.channel || '',
-        platform: info.extractor_key || '',
-      });
-    }
+    const output = await runYtdlp(args);
+    const info = JSON.parse(output);
+
+    res.json({
+      title: info.title || 'Video',
+      thumbnail: info.thumbnail || '',
+      duration: info.duration || 0,
+      uploader: info.uploader || info.channel || '',
+      platform: info.extractor_key || '',
+    });
   } catch (err) {
     console.error('[FETCH ERR]', err.stderr || err.error);
-    res.status(500).json({ error: 'عذراً، لم نتمكن من جلب بيانات الفيديو. السيرفر بيقول: ' + (err.stderr || 'Unexpected Error') });
+    const msg = err.stderr || '';
+    if (msg.includes('Sign in to confirm')) {
+      return res.status(500).json({ error: 'يوتيوب يطلب توثيق. جرب رابطاً آخر أو انتظر قليلاً.' });
+    }
+    res.status(500).json({ error: 'فشل الجلب: ' + (msg || 'Unexpected error') });
   }
 });
 
@@ -90,6 +77,7 @@ app.get('/download', async (req, res) => {
       `"${url.trim()}"`,
       '--no-playlist',
       '--ignore-config',
+      '--extractor-args "youtube:player_client=ios"',
       `-o "${tmpFile}"`
     ];
 
@@ -99,7 +87,6 @@ app.get('/download', async (req, res) => {
       args.push('-x', '--audio-format mp3', '--audio-quality 0');
     } else {
       const h = quality || '720';
-      // Super flexible format fallback
       args.push(`-f "bestvideo[height<=${h}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${h}]/best"`, '--merge-output-format mp4');
     }
 
@@ -114,8 +101,8 @@ app.get('/download', async (req, res) => {
     fs.createReadStream(tmpFile).pipe(res).on('finish', () => fs.unlink(tmpFile, () => {}));
   } catch (err) {
     console.error('[DL ERR]', err.stderr || err.error);
-    if (!res.headersSent) res.status(500).json({ error: 'فشل التحميل. جرب جودة أخرى أو رابطاً مختلفاً.' });
+    if (!res.headersSent) res.status(500).json({ error: 'فشل التحميل' });
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Final attempt on ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 iOS Emulation ready on ${PORT}`));
