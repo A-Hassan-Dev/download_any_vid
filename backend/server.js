@@ -40,9 +40,7 @@ app.post('/fetch', async (req, res) => {
       '--dump-json',
       '--no-playlist',
       '--no-warnings',
-      '--ignore-config',
-      // Try to BE AS GENERIC AS POSSIBLE
-      '--format "best/bestvideo+bestaudio"',
+      '--no-check-certificates'
     ];
     
     if (fs.existsSync(COOKIES_PATH)) args.push(`--cookies "${COOKIES_PATH}"`);
@@ -59,8 +57,7 @@ app.post('/fetch', async (req, res) => {
     });
   } catch (err) {
     console.error('[FETCH ERR]', err.stderr || err.error);
-    const msg = err.stderr || '';
-    res.status(500).json({ error: 'حدث خطأ: ' + (msg.includes('format is not available') ? 'الجودة غير متاحة حالياً جرب رابطاً آخر.' : msg) });
+    res.status(500).json({ error: 'فشل جلب البيانات: ' + (err.stderr || 'مشكلة في الرابط') });
   }
 });
 
@@ -73,7 +70,7 @@ app.get('/download', async (req, res) => {
     const args = [
       `"${url.trim()}"`,
       '--no-playlist',
-      '--ignore-config',
+      '--no-check-certificates',
       `-o "${tmpFile}"`
     ];
 
@@ -83,8 +80,7 @@ app.get('/download', async (req, res) => {
       args.push('-x', '--audio-format mp3', '--audio-quality 0');
     } else {
       const h = quality || '720';
-      // Use format sort instead of strict selection
-      args.push(`-f "bestvideo[height<=${h}]+bestaudio/best[height<=${h}]/best"`, '--merge-output-format mp4');
+      args.push(`-f "bestvideo[height<=${h}]+bestaudio/best"`, '--merge-output-format mp4');
     }
 
     await runYtdlp(args);
@@ -104,4 +100,4 @@ app.get('/download', async (req, res) => {
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Live on ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Dedicated to success on ${PORT}`));
